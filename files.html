@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Your Files</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+<h1>☁️ Secure Cloud Storage</h1>
+
+<div class="container">
+  <h3>Your Files</h3>
+<h4>Storage Usage</h4>
+
+<div class="storage-wrapper">
+  <div class="storage-bar">
+    <div id="storageProgress"></div>
+  </div>
+  <p id="storageText">Calculating...</p>
+</div><input type="text" id="searchInput" placeholder="Search files..." onkeyup="filterFiles()">
+<label>Share link expiry:</label>
+
+<select id="expiryTime">
+  <option value="60">1 minute</option>
+  <option value="300">5 minutes</option>
+  <option value="600">10 minutes</option>
+  <option value="3600">1 hour</option>
+  <option value="86400">24 hours</option>
+</select>
+
+  <ul id="fileList"></ul>
+
+  <a href="dashboard.html">Back to Dashboard</a>
+</div>
+
+<!-- Firebase SDK -->
+ <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-storage-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+
+<!-- Your config -->
+<script src="firebase.js"></script>
+<script>
+
+const STORAGE_LIMIT_MB = 100;
+let allFiles = []; // Global for search
+
+auth.onAuthStateChanged(user => {
+  if (!user) window.location.href = "index.html";
+  else listFiles(user);
+});
+
+function listFiles(user) {
+
+  const listRef = storage.ref(`user_uploads/${user.uid}/`);
+  const fileList = document.getElementById("fileList");
+
+  fileList.innerHTML = "";
+  allFiles = [];
+
+  listRef.listAll()
+    .then(async (res) => {
+
+      if (res.items.length === 0) {
+        fileList.innerHTML = "<li>No files uploaded yet</li>";
+        updateStorageUI(0);
+        return;
+      }
+
+      let totalBytes = 0;
+
+      for (const itemRef of res.items) {
+let metadata;
+
+try {
+  metadata = await itemRef.getMetadata();
+} catch (error) {
+  if (error.code === "storage/object-not-found") {
+    console.log("File already deleted:", itemRef.name);
+    continue;
+  } else {
+    throw error;
+  }
+}
+        totalBytes += metadata.size;
+
+        allFiles.push({
+          ref: itemRef,
+          name: itemRef.name,
+          size: metadata.size
+        });
+      }
+
+      displayFiles(allFiles);
+      updateStorageUI(totalBytes);
+    })
+    .catch(err => {
+      console.error(err);
+      alert(err.message);
+    });
+}
+
+function updateStorageUI(totalBytes) {
+
+  const totalMB = totalBytes / (1024 * 1024);
+  const percentage = (totalMB / STORAGE_LIMIT_MB) * 100;
+
+  const progressBar = document.getElementById("storageProgress");
+  const storageText = document.getElementById("storageText");
+
+  progressBar.style.width = Math.min(percentage, 100) + "%";
+
+  if (percentage > 90) {
+    progressBar.style.background = "red";
+  } else if (percentage > 70) {
+    progressBar.style.background = "orange";
+  } else {
+    progressBar.style.background = "linear-gradient(90deg, #4caf50, #2196f3)";
+  }
+
+  storageText.textContent =
+    `${totalMB.toFixed(2)} MB used of ${STORAGE_LIMIT_MB} MB (${percentage.toFixed(1)}%)`;
+}
+
+function displayFiles(files) {
+
+  const fileList = document.getElementById("fileList");
+  fileList.innerHTML = "";
+
+  files.forEach(file => {
+
+    const li = document.createElement("li");
+
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = file.name;
+
+    const sizeSpan = document.createElement("span");
+    sizeSpan.style.marginLeft = "10px";
+    sizeSpan.textContent = `(${(file.size / 1024).toFixed(1)} KB)`;
+
+    const downloadBtn = document.createElement("button");
+    downloadBtn.textContent = "Download";
+    downloadBtn.onclick = () => downloadFile(file.ref);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.textContent = "Delete";
+    deleteBtn.onclick = () => deleteFile(file.ref);
+
+    const shareBtn = document.createElement("button");
+    shareBtn.textContent = "Share";
+    shareBtn.onclick = () => shareFile(file.ref);
+const downloadInfo = document.createElement("span");
+downloadInfo.style.marginLeft = "10px";
+downloadInfo.textContent = "Downloads: loading...";
+file.ref.getDownloadURL().then(async url => {
+
+ const count = await getDownloadCount(url);
+  downloadInfo.textContent = "Downloads: " + count;
+})
+.catch(() => {
+  downloadInfo.textContent = "File removed";
+});
+
+    li.appendChild(nameSpan);
+    li.appendChild(sizeSpan);
+    li.appendChild(downloadBtn);
+    li.appendChild(deleteBtn);
+    li.appendChild(shareBtn);
+li.appendChild(downloadInfo);
+
+    fileList.appendChild(li);
+  });
+}
+
+function filterFiles() {
+  const query = document.getElementById("searchInput").value.toLowerCase();
+
+  const filtered = allFiles.filter(file =>
+    file.name.toLowerCase().includes(query)
+  );
+
+  displayFiles(filtered);
+}
+
+async function downloadFile(itemRef) {
+  try {
+    const url = await itemRef.getDownloadURL();
+    const response = await fetch(url);
+    const encryptedText = await response.text();
+
+    const key = prompt("Enter encryption key to decrypt:");
+    if (!key) return;
+
+    const decrypted = CryptoJS.AES.decrypt(encryptedText, key);
+
+    if (!decrypted.sigBytes) {
+      alert("Wrong key or corrupted file");
+      return;
+    }
+
+    const words = decrypted.words;
+    const sigBytes = decrypted.sigBytes;
+    const u8 = new Uint8Array(sigBytes);
+
+    for (let i = 0; i < sigBytes; i++) {
+      u8[i] = (words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
+    }
+
+    const blob = new Blob([u8]);
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = itemRef.name.replace(".enc", "");
+    link.click();
+
+  } catch (err) {
+    console.error(err);
+    alert("Decryption failed");
+  }
+}
+
+function deleteFile(itemRef) {
+  if (!confirm("Delete this file?")) return;
+
+  itemRef.delete()
+    .then(() => {
+      alert("Deleted");
+      listFiles(auth.currentUser);
+    })
+    .catch(err => alert(err.message));
+}
+
+async function shareFile(itemRef) {
+
+  try {
+
+    const url = await itemRef.getDownloadURL();
+
+    const seconds = Number(document.getElementById("expiryTime").value);
+    const expiry = Date.now() + (seconds * 1000);
+
+    // ✅ Generate secure random token
+    const token = crypto.randomUUID();
+
+    const doc = await db.collection("shares").add({
+      fileURL: url,
+      expiry: expiry,
+      downloads: 0,
+maxDownloads:5,
+      name: itemRef.name,
+      token: token,
+owner:auth.currentUser.uid
+    });
+
+    // ✅ Include token in share link
+    const shareLink =
+      window.location.origin +
+      "/download.html?id=" +
+      doc.id +
+      "&token=" +
+      token;
+
+    await navigator.clipboard.writeText(shareLink);
+
+    alert("Secure share link copied!");
+
+  } catch (err) {
+    console.error(err);
+    alert("Share failed");
+  }
+
+}
+async function getDownloadCount(fileURL) {
+
+  const snapshot = await db
+    .collection("shares")
+    .where("fileURL", "==", fileURL)
+    .get();
+
+  let totalDownloads = 0;
+
+  snapshot.forEach(doc => {
+    const data = doc.data();
+    totalDownloads += data.downloads || 0;
+  });
+
+  return totalDownloads;
+}
+window.addEventListener("focus", () => {
+  if (auth.currentUser) {
+    listFiles(auth.currentUser);
+  }
+});
+</script>
+</body>
+</html>

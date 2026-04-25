@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Secure Cloud Storage</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+<h1>☁️ Secure Cloud Storage</h1>
+
+<div class="container">
+  <h3>Authentication</h3>
+
+  <input type="email" id="email" placeholder="Email">
+  <input type="password" id="password" placeholder="Password">
+
+  <button onclick="signup()">Sign Up</button>
+  <button onclick="login()">Log In</button>
+</div>
+
+<!-- Invisible reCAPTCHA -->
+<div id="recaptcha-container"></div>
+
+<!-- Firebase scripts -->
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-storage-compat.js"></script>
+//<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-functions-//compat.js"></script>
+
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyCxcX8syyY0US76LOV5KPVuRrGYov3QsNg",
+  authDomain: "cloud-27ae5.firebaseapp.com",
+  projectId: "cloud-27ae5",
+  storageBucket: "cloud-27ae5.firebasestorage.app",
+  messagingSenderId: "1008253540495",
+  appId: "1:1008253540495:web:302f9de8951fdfc89738fa"
+};
+
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+
+// Setup invisible reCAPTCHA
+window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', {
+  size: 'invisible'
+});
+recaptchaVerifier.render();
+function signup() {
+
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+
+  auth.createUserWithEmailAndPassword(email, password)
+    .then((userCredential) => {
+
+      const user = userCredential.user;
+
+      user.sendEmailVerification();
+
+      alert("Signup successful! Please verify your email before logging in.");
+
+    })
+    .catch(err => alert(err.message));
+}
+function login() {
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+
+  auth.signInWithEmailAndPassword(email, password)
+    .then((userCredential) => {
+
+  const user = userCredential.user;
+
+  if (!user.emailVerified) {
+    alert("Please verify your email first.");
+    auth.signOut();
+    return;
+  }
+
+  window.location.href = "dashboard.html";
+
+})
+    .catch(async (error) => {
+
+      if (error.code === "auth/multi-factor-auth-required") {
+
+        const resolver = error.resolver;
+
+        const phoneInfoOptions = {
+          multiFactorHint: resolver.hints[0],
+          session: resolver.session
+        };
+
+        const phoneAuthProvider = new firebase.auth.PhoneAuthProvider();
+        const verificationId =
+          await phoneAuthProvider.verifyPhoneNumber(phoneInfoOptions, window.recaptchaVerifier);
+
+        const code = prompt("Enter OTP sent to your phone");
+
+        const cred = firebase.auth.PhoneAuthProvider.credential(verificationId, code);
+        const multiFactorAssertion =
+          firebase.auth.PhoneMultiFactorGenerator.assertion(cred);
+
+        await resolver.resolveSignIn(multiFactorAssertion);
+
+        window.location.href = "dashboard.html";
+
+      } else {
+        alert(error.message);
+      }
+
+    });
+}
+</script>
+
+</body>
+</html>

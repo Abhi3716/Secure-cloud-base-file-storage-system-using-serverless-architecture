@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Dashboard</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+<h1>☁️ Secure Cloud Storage</h1>
+
+<div class="container">
+  <h3>Dashboard</h3>
+
+  <input type="file" id="fileInput">
+  <button onclick="uploadFile()">Upload Securely</button>
+
+  <button onclick="enroll2FA()">Enable 2FA</button>
+
+<a href="files.html" class="btn-link">Go to My Files</a>
+
+  <button onclick="logout()">Logout</button>
+</div>
+
+<div id="recaptcha-container"></div>
+
+<!-- Firebase SDK FIRST -->
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-storage-compat.js"></script>
+
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+
+<!-- Your config -->
+<script src="firebase.js"></script>
+
+<!-- Crypto -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+
+<script>
+async function generateHash(buffer) {
+  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+
+  return hashArray
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+auth.onAuthStateChanged(user => {
+  if (!user) {
+    window.location.href = "index.html";
+  }
+});
+
+function logout() {
+  auth.signOut().then(() => window.location.href = "index.html");
+}
+
+function uploadFile() {
+
+  const file = document.getElementById("fileInput").files[0];
+  const user = auth.currentUser;
+
+  if (!user) {
+    alert("Login first");
+    return;
+  }
+
+  if (!file) {
+    alert("Choose file");
+    return;
+  }
+
+  // ✅ If you want storage limit, define it first
+  const STORAGE_LIMIT_MB = 100;
+
+  if (file.size > STORAGE_LIMIT_MB * 1024 * 1024) {
+    alert("File exceeds total storage limit!");
+    return;
+  }
+
+  const key = prompt("Enter encryption key");
+  if (!key) return;
+
+  const reader = new FileReader();
+
+reader.onload = async function(e) {
+
+  const buffer = e.target.result;
+
+  // ⭐ generate file hash
+  const fileHash = await generateHash(buffer);
+
+  const wordArray = CryptoJS.lib.WordArray.create(buffer);
+  const encrypted = CryptoJS.AES.encrypt(wordArray, key).toString();
+  const blob = new Blob([encrypted], { type: "text/plain" });
+
+  const path = `user_uploads/${user.uid}/${file.name}.enc`;
+
+  await storage.ref(path).put(blob);
+
+  // ⭐ save hash in Firestore
+  await db.collection("fileHashes").doc(`${user.uid}_${file.name}`).set({
+    hash: fileHash,
+    name: file.name,
+    owner: user.uid
+  });
+
+  alert("✅ Uploaded with integrity protection");
+
+};
+
+  reader.readAsArrayBuffer(file);
+}
+window.onload = function () {
+  window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier(
+    'recaptcha-container',
+    { size: 'invisible' }
+  );
+
+  recaptchaVerifier.render();
+};
+
+async function enroll2FA() {
+
+  try {
+
+    const user = auth.currentUser;
+
+    if (!user) {
+      alert("Login first");
+      return;
+    }
+
+    if (user.multiFactor.enrolledFactors.length > 0) {
+      alert("2FA already enabled");
+      return;
+    }
+
+    const phoneNumber = prompt("Enter phone number with country code (e.g. +919876543210)");
+    if (!phoneNumber) return;
+
+    const multiFactorSession = await user.multiFactor.getSession();
+
+    const phoneInfoOptions = {
+      phoneNumber: phoneNumber,
+      session: multiFactorSession
+    };
+
+    const phoneAuthProvider = new firebase.auth.PhoneAuthProvider();
+
+    const verificationId =
+      await phoneAuthProvider.verifyPhoneNumber(
+        phoneInfoOptions,
+        window.recaptchaVerifier
+      );
+
+    const verificationCode = prompt("Enter OTP sent to your phone");
+
+    const cred = firebase.auth.PhoneAuthProvider.credential(
+      verificationId,
+      verificationCode
+    );
+
+    const multiFactorAssertion =
+      firebase.auth.PhoneMultiFactorGenerator.assertion(cred);
+
+    await user.multiFactor.enroll(multiFactorAssertion, "My Phone");
+
+    alert("✅ 2FA Enabled Successfully!");
+
+  } catch (error) {
+
+    console.error(error);
+    alert(error.message);
+
+  }
+}</script>
+</body>
+</html>

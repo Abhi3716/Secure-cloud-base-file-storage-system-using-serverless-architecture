@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-storage-compat.js"></script>
+
+<script src="firebase.js"></script>
+<title>Secure File Download</title>
+</head>
+
+<body>
+
+<h2>Download Secure File</h2>
+
+<input type="password" id="key" placeholder="Enter decryption key">
+<button onclick="downloadSharedFile()">Download</button>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+
+<script>
+
+async function downloadSharedFile() {
+
+  try {
+
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("id");
+    const token = params.get("token");
+
+    if (!id || !token) {
+      alert("Invalid link");
+      return;
+    }
+
+    const docRef = db.collection("shares").doc(id);
+    const docSnap = await docRef.get();
+
+    if (!docSnap.exists) {
+      alert("Link not found");
+      return;
+    }
+
+    const data = docSnap.data();
+// ✅ Check download limit
+if (data.downloads >= data.maxDownloads) {
+  alert("Download limit reached.");
+  return;
+}
+
+    // ✅ TOKEN SECURITY CHECK
+    if (data.token !== token) {
+      alert("Unauthorized access");
+      return;
+    }
+
+    // ✅ Expiry check
+    if (Date.now() > data.expiry) {
+      alert("This share link has expired.");
+      return;
+    }
+
+    const key = document.getElementById("key").value;
+
+    const response = await fetch(data.fileURL);
+    const encryptedText = await response.text();
+
+    const decrypted = CryptoJS.AES.decrypt(encryptedText, key);
+
+    if (!decrypted.sigBytes) {
+      alert("Wrong key");
+      return;
+    }
+
+    const words = decrypted.words;
+    const sigBytes = decrypted.sigBytes;
+    const u8 = new Uint8Array(sigBytes);
+
+    for (let i = 0; i < sigBytes; i++) {
+      u8[i] = (words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff;
+    }
+// ⭐ generate hash of decrypted file
+const downloadedHash = await generateHash(u8.buffer);
+
+// ⭐ get original hash from Firestore
+const hashDoc = await db
+  .collection("fileHashes")
+  .doc(`${data.owner}_${data.name.replace(".enc","")}`)
+  .get();
+
+if (!hashDoc.exists) {
+  alert("Hash record missing");
+  return;
+}
+
+const originalHash = hashDoc.data().hash;
+
+// ⭐ compare hashes
+if (downloadedHash !== originalHash) {
+  alert("⚠ File integrity check failed. File may be corrupted.");
+  return;
+}
+    const blob = new Blob([u8], { type: "application/octet-stream" });
+
+    // ✅ increase download count
+    await docRef.update({
+      downloads: firebase.firestore.FieldValue.increment(1)
+    });
+
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = data.name.replace(".enc", "");
+    link.click();
+
+  } catch (err) {
+
+    console.error("Download error:", err);
+    alert("Download failed");
+
+  }
+}
+async function generateHash(buffer) {
+  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+
+  return hashArray
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+
+
+}</script>
+
+</body>
+</html>
